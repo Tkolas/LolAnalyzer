@@ -37,13 +37,19 @@ public class App {
     public static void main(String[] args) throws UnirestException, IOException {
         Configurer.configure(objectMapper);
 
-        List<Match> matches = getMatches(summonerName);
+        HttpResponse<Summoner> summonerResponse =
+                Unirest.get(baseUrl + summonerEndpoint + summonerName)
+                        .queryString("api_key", keyParameter)
+                        .asObject(Summoner.class);
+        Summoner summoner = summonerResponse.getBody();
+
+        List<Match> matches = getMatches(summoner);
         Map<Integer, List<Pair<LocalDateTime, Long>>> times =
                 matches.stream()
                 .map(match -> new Pair<>(TimeUtils.dateForTimestamp(match.getTimestamp()), match.getGameId()))
                 .collect(Collectors.groupingBy(pair -> pair.first.getHour()));
 
-        val statistics = computeStatistics(times);
+        val statistics = computeStatistics(times, summoner.getAccountId());
 
         statistics.forEach(
                 (hour, statusesList) ->
@@ -53,13 +59,13 @@ public class App {
                 );
     }
 
-    private static HashMap<Integer, List<Boolean>> computeStatistics(Map<Integer, List<Pair<LocalDateTime, Long>>> times) {
+    private static HashMap<Integer, List<Boolean>> computeStatistics(Map<Integer, List<Pair<LocalDateTime, Long>>> times, String accountId) {
         HashMap<Integer, List<Boolean>> statistics = new HashMap<>();
 
         times.forEach((hour, gamesData) -> {
             List<Boolean> gameStatuses = null;
             try {
-                gameStatuses = getWinStatuses(gamesData);
+                gameStatuses = getWinStatuses(gamesData, accountId);
             } catch (IOException | UnirestException | InterruptedException e) {
                 e.printStackTrace();
             }
@@ -69,17 +75,17 @@ public class App {
         return statistics;
     }
 
-    private static List<Boolean> getWinStatuses(List<Pair<LocalDateTime, Long>> gamesData) throws IOException, UnirestException, InterruptedException {
+    private static List<Boolean> getWinStatuses(List<Pair<LocalDateTime, Long>> gamesData, String accountId) throws IOException, UnirestException, InterruptedException {
         List<Boolean> result = new ArrayList<>();
         for (Pair<LocalDateTime, Long> gameData : gamesData) {
-            result.add(checkGameResult(gameData.second));
+            result.add(checkGameResult(gameData.second, accountId));
             Thread.sleep(1200);
         }
 
         return result;
     }
 
-    private static boolean checkGameResult(Long matchId) throws IOException, UnirestException {
+    private static boolean checkGameResult(Long matchId, String accountId) throws IOException, UnirestException {
         HttpResponse<JsonNode> matchResponse =
                 Unirest.get(baseUrl + matchEndpoint)
                 .queryString("api_key", keyParameter)
@@ -94,7 +100,7 @@ public class App {
 
         long participantId =
                 participantsIdentities.stream()
-                        .filter(identity -> identity.getPlayer().getSummonerName().equalsIgnoreCase(summonerName))
+                        .filter(identity -> identity.getPlayer().getCurrentAccountId().equals(accountId))
                         .findFirst()
                         .orElseThrow(() -> new RuntimeException("Ni ma"))
                         .getParticipantId();
@@ -110,13 +116,7 @@ public class App {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private static List<Match> getMatches(String summonerName) throws UnirestException, IOException {
-        HttpResponse<Summoner> summonerResponse =
-                Unirest.get(baseUrl + summonerEndpoint + summonerName)
-                        .queryString("api_key", keyParameter)
-                        .asObject(Summoner.class);
-        Summoner summoner = summonerResponse.getBody();
-
+    private static List<Match> getMatches(Summoner summoner) throws UnirestException, IOException {
         HttpResponse<JsonNode> exploringResponse =
                 Unirest.get(baseUrl + matchListEndpoint + summoner.getAccountId())
                         .queryString("api_key", keyParameter)

@@ -6,5 +6,5 @@ import lombok.Data;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 public class Player {
-    private String summonerName;
+    private String currentAccountId;
 }
