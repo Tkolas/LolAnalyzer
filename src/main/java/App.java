@@ -3,6 +3,7 @@ import Entities.Match;
 import Entities.Participant;
 import Entities.ParticipantIdentity;
 import Entities.Summoner;
+import Utils.JsonUtils;
 import Utils.Pair;
 import Utils.TimeUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,11 +16,11 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class App {
@@ -28,88 +29,83 @@ public class App {
     private static final String matchEndpoint = "/lol/match/v4/matches/{matchId}";
     private static final String summonerName = "kuraburamaster";
     private static final String keyParameter = "RGAPI-91fce27b-bf95-4909-aaf9-07b911444df4";
-    private static final String matchlistEndpoint = "/lol/match/v4/matchlists/by-account/";
+    private static final String matchListEndpoint = "/lol/match/v4/matchlists/by-account/";
+
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
 
     public static void main(String[] args) throws UnirestException, IOException {
-        Configurer.configure();
+        Configurer.configure(objectMapper);
 
         List<Match> matches = getMatches(summonerName);
-        val times =
+        Map<Integer, List<Pair<LocalDateTime, Long>>> times =
                 matches.stream()
-                        .map(match -> new Pair<>(TimeUtils.dateForTimestamp(match.getTimestamp()), match.getGameId()))
-                        .collect(Collectors.groupingBy(el -> el.first.getDayOfWeek()));
+                .map(match -> new Pair<>(TimeUtils.dateForTimestamp(match.getTimestamp()), match.getGameId()))
+                .collect(Collectors.groupingBy(pair -> pair.first.getHour()));
 
-        val results = new HashMap<DayOfWeek, List<Boolean>>();
-        times.forEach((e, f) -> {
-            List<Boolean> gameStatuses = getWinStatuses(f);
-            results.put(e, gameStatuses);
-        });
+        val statistics = computeStatistics(times);
 
-        results.forEach((e, f) -> System.out.println("Hour: " + e + ", winrate = " + (double) f.stream().filter(bool -> bool).count() / f.size() + ", games: " + f.size()));
-
-        System.out.println(times);
+        statistics.forEach(
+                (hour, statusesList) ->
+                    System.out.println("Hour: " + hour +
+                            ", winrate = " + (double) statusesList.stream().filter(isWon -> isWon).count() / statusesList.size() +
+                            ", games: " + statusesList.size())
+                );
     }
 
-    private static List<Boolean> getWinStatuses(List<Pair<LocalDateTime, Long>> f) {
-        List<Boolean> result = new ArrayList<>();
-        for (Pair<LocalDateTime, Long> pair : f) {
-            result.add(findResult(pair.second));
+    private static HashMap<Integer, List<Boolean>> computeStatistics(Map<Integer, List<Pair<LocalDateTime, Long>>> times) {
+        HashMap<Integer, List<Boolean>> statistics = new HashMap<>();
+
+        times.forEach((hour, gamesData) -> {
+            List<Boolean> gameStatuses = null;
             try {
-                Thread.sleep(1200);
-            } catch (InterruptedException e) {
+                gameStatuses = getWinStatuses(gamesData);
+            } catch (IOException | UnirestException | InterruptedException e) {
                 e.printStackTrace();
             }
+            statistics.put(hour, gameStatuses);
+        });
+
+        return statistics;
+    }
+
+    private static List<Boolean> getWinStatuses(List<Pair<LocalDateTime, Long>> gamesData) throws IOException, UnirestException, InterruptedException {
+        List<Boolean> result = new ArrayList<>();
+        for (Pair<LocalDateTime, Long> gameData : gamesData) {
+            result.add(checkGameResult(gameData.second));
+            Thread.sleep(1200);
         }
 
         return result;
     }
 
-    private static boolean findResult(Long matchId) {
-        boolean result = false;
-        try {
-            HttpResponse<JsonNode> matchResponse =
-                    Unirest.get(baseUrl + matchEndpoint)
-                    .queryString("api_key", keyParameter)
-                    .routeParam("matchId", String.valueOf(matchId))
-                    .asJson();
-            JSONArray participantsArray = matchResponse.getBody().getObject().getJSONArray("participants");
-            JSONArray participantIdentitiesArray = matchResponse.getBody().getObject().getJSONArray("participantIdentities");
+    private static boolean checkGameResult(Long matchId) throws IOException, UnirestException {
+        HttpResponse<JsonNode> matchResponse =
+                Unirest.get(baseUrl + matchEndpoint)
+                .queryString("api_key", keyParameter)
+                .routeParam("matchId", String.valueOf(matchId))
+                .asJson();
+        JSONArray participantsArray = matchResponse.getBody().getObject().getJSONArray("participants");
+        JSONArray participantIdentitiesArray = matchResponse.getBody().getObject().getJSONArray("participantIdentities");
 
-            ObjectMapper objectMapper = new ObjectMapper();
-            List<Participant> participants =
-                    objectMapper.readValue(
-                            participantsArray.toString(),
-                            objectMapper.getTypeFactory().constructCollectionType(List.class, Participant.class)
-                    );
-            System.out.println("participants:" + participants);
+        List<Participant> participants = JsonUtils.JSONArrayToList(objectMapper, participantsArray, Participant.class);
+        List<ParticipantIdentity> participantsIdentities =
+                JsonUtils.JSONArrayToList(objectMapper, participantIdentitiesArray, ParticipantIdentity.class);
 
+        long participantId =
+                participantsIdentities.stream()
+                        .filter(identity -> identity.getPlayer().getSummonerName().equalsIgnoreCase(summonerName))
+                        .findFirst()
+                        .orElseThrow(() -> new RuntimeException("Ni ma"))
+                        .getParticipantId();
 
-            List<ParticipantIdentity> participantsIdentities =
-                    objectMapper.readValue(
-                            participantIdentitiesArray.toString(),
-                            objectMapper.getTypeFactory().constructCollectionType(List.class, ParticipantIdentity.class)
-                    );
-            System.out.println("participant identities:" + participantsIdentities);
+        boolean result = participants.stream()
+                .filter(participant -> participant.getParticipantId() == participantId)
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Ni ma2"))
+                .getStats()
+                .isWin();
 
-
-            long participantId =
-                    participantsIdentities.stream()
-                            .filter(identity -> identity.getPlayer().getSummonerName().equalsIgnoreCase(summonerName))
-                            .findFirst()
-                            .orElseThrow(() -> new RuntimeException("Ni ma"))
-                            .getParticipantId();
-
-            result = participants.stream()
-                    .filter(participant -> participant.getParticipantId() == participantId)
-                    .findFirst()
-                    .orElseThrow(() -> new RuntimeException("Ni ma2"))
-                    .getStats()
-                    .isWin();
-
-        } catch (UnirestException | IOException e) {
-            e.printStackTrace();
-        }
         return result;
     }
 
@@ -122,30 +118,25 @@ public class App {
         Summoner summoner = summonerResponse.getBody();
 
         HttpResponse<JsonNode> exploringResponse =
-                Unirest.get(baseUrl + matchlistEndpoint + summoner.getAccountId())
+                Unirest.get(baseUrl + matchListEndpoint + summoner.getAccountId())
                         .queryString("api_key", keyParameter)
                         .queryString("beginIndex", 200)
                         .asJson();
 
-        List<Match> matches = new ArrayList<>();
         JSONObject jsonObject = exploringResponse.getBody().getObject();
         int totalGames = jsonObject.getInt("totalGames");
         System.out.println("total games = " + totalGames);
 
+        List<Match> matches = new ArrayList<>();
         for (int beginIndex = 0; beginIndex < totalGames; beginIndex += 100) {
             HttpResponse<JsonNode> jsonNodeHttpResponse =
-                    Unirest.get(baseUrl + matchlistEndpoint + summoner.getAccountId())
+                    Unirest.get(baseUrl + matchListEndpoint + summoner.getAccountId())
                             .queryString("api_key", keyParameter)
                             .queryString("beginIndex", beginIndex)
                             .asJson();
             JSONArray array = jsonNodeHttpResponse.getBody().getObject().getJSONArray("matches");
 
-            ObjectMapper objectMapper = new ObjectMapper();
-            List<Match> matchesFromOnePeriod =
-                    objectMapper.readValue(
-                            array.toString(),
-                            objectMapper.getTypeFactory().constructCollectionType(List.class, Match.class)
-                    );
+            List<Match> matchesFromOnePeriod = JsonUtils.JSONArrayToList(objectMapper, array, Match.class);
             matches.addAll(matchesFromOnePeriod);
         }
 
