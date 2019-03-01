@@ -30,11 +30,9 @@ public class App {
     private static final String keyParameter = "RGAPI-91fce27b-bf95-4909-aaf9-07b911444df4";
     private static final String matchListEndpoint = "/lol/match/v4/matchlists/by-account/";
 
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-
 
     public static void main(String[] args) throws UnirestException, IOException {
-        Configurer.configure(objectMapper);
+        Configurer.configure();
 
         HttpResponse<Summoner> summonerResponse =
                 Unirest.get(baseUrl + summonerEndpoint + summonerName)
@@ -80,7 +78,7 @@ public class App {
 
             JSONArray matchesArray = jsonNodeHttpResponse.getBody().getObject().getJSONArray("matches");
 
-            List<Match> matchesFromOnePeriod = JsonUtils.JSONArrayToList(objectMapper, matchesArray, Match.class);
+            List<Match> matchesFromOnePeriod = JsonUtils.JSONArrayToList(matchesArray, Match.class);
             matches.addAll(matchesFromOnePeriod);
         }
 
@@ -122,9 +120,9 @@ public class App {
         JSONArray participantsArray = matchResponse.getBody().getObject().getJSONArray("participants");
         JSONArray participantIdentitiesArray = matchResponse.getBody().getObject().getJSONArray("participantIdentities");
 
-        List<Participant> participants = JsonUtils.JSONArrayToList(objectMapper, participantsArray, Participant.class);
+        List<Participant> participants = JsonUtils.JSONArrayToList(participantsArray, Participant.class);
         List<ParticipantIdentity> participantsIdentities =
-                JsonUtils.JSONArrayToList(objectMapper, participantIdentitiesArray, ParticipantIdentity.class);
+                JsonUtils.JSONArrayToList(participantIdentitiesArray, ParticipantIdentity.class);
 
         long participantId =
                 participantsIdentities.stream()

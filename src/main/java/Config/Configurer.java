@@ -6,7 +6,9 @@ import com.mashape.unirest.http.Unirest;
 import java.io.IOException;
 
 public class Configurer {
-    public static void configure(com.fasterxml.jackson.databind.ObjectMapper jacksonObjectMapper) {
+    public static void configure() {
+        com.fasterxml.jackson.databind.ObjectMapper jacksonObjectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
         Unirest.setObjectMapper(new com.mashape.unirest.http.ObjectMapper() {
             public <T> T readValue(String value, Class<T> valueType) {
                 try {

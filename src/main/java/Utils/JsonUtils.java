@@ -9,7 +9,8 @@ import java.util.List;
 public class JsonUtils {
 
     @SuppressWarnings("UnnecessaryLocalVariable")
-    public static <T> List<T> JSONArrayToList(ObjectMapper mapper, JSONArray array, Class<T> listType) throws IOException {
+    public static <T> List<T> JSONArrayToList(JSONArray array, Class<T> listType) throws IOException {
+        ObjectMapper mapper = new ObjectMapper();
         List<T> list =
                 mapper.readValue(
                         array.toString(),
