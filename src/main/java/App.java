@@ -3,8 +3,8 @@ import Entities.Match;
 import Entities.Participant;
 import Entities.ParticipantIdentity;
 import Entities.Summoner;
+import Utils.ApiConstants;
 import Utils.JsonUtils;
-import Utils.Pair;
 import Utils.TimeUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mashape.unirest.http.HttpResponse;
@@ -16,7 +16,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -39,16 +38,16 @@ public class App {
 
         HttpResponse<Summoner> summonerResponse =
                 Unirest.get(baseUrl + summonerEndpoint + summonerName)
-                        .queryString("api_key", keyParameter)
+                        .queryString(ApiConstants.API_KEY, keyParameter)
                         .asObject(Summoner.class);
         Summoner summoner = summonerResponse.getBody();
 
         List<Match> matches = getMatches(summoner);
-        Map<Integer, List<Pair<LocalDateTime, Long>>> times =
+        Map<Integer, List<Long>> times =
                 matches.stream()
-                .map(match -> new Pair<>(TimeUtils.dateForTimestamp(match.getTimestamp()), match.getGameId()))
-                .collect(Collectors.groupingBy(pair -> pair.first.getHour()));
-
+                .collect(Collectors.groupingBy(
+                            match -> TimeUtils.dateForTimestamp(match.getTimestamp()).getHour(),
+                            Collectors.mapping(Match::getGameId, Collectors.toList())));
         val statistics = computeStatistics(times, summoner.getAccountId());
 
         statistics.forEach(
@@ -59,13 +58,42 @@ public class App {
                 );
     }
 
-    private static HashMap<Integer, List<Boolean>> computeStatistics(Map<Integer, List<Pair<LocalDateTime, Long>>> times, String accountId) {
+    @SuppressWarnings("SameParameterValue")
+    private static List<Match> getMatches(Summoner summoner) throws UnirestException, IOException {
+        HttpResponse<JsonNode> exploringResponse =
+                Unirest.get(baseUrl + matchListEndpoint + summoner.getAccountId())
+                        .queryString(ApiConstants.API_KEY, keyParameter)
+                        .queryString(ApiConstants.BEGIN_INDEX, 200)
+                        .asJson();
+
+        JSONObject jsonObject = exploringResponse.getBody().getObject();
+        int totalGames = jsonObject.getInt("totalGames");
+        System.out.println("total games = " + totalGames);
+
+        List<Match> matches = new ArrayList<>();
+        for (int beginIndex = 0; beginIndex < totalGames; beginIndex += 100) {
+            HttpResponse<JsonNode> jsonNodeHttpResponse =
+                    Unirest.get(baseUrl + matchListEndpoint + summoner.getAccountId())
+                            .queryString(ApiConstants.API_KEY, keyParameter)
+                            .queryString(ApiConstants.BEGIN_INDEX, beginIndex)
+                            .asJson();
+
+            JSONArray matchesArray = jsonNodeHttpResponse.getBody().getObject().getJSONArray("matches");
+
+            List<Match> matchesFromOnePeriod = JsonUtils.JSONArrayToList(objectMapper, matchesArray, Match.class);
+            matches.addAll(matchesFromOnePeriod);
+        }
+
+        return matches;
+    }
+
+    private static HashMap<Integer, List<Boolean>> computeStatistics(Map<Integer, List<Long>> aggregatedGamesIds, String accountId) {
         HashMap<Integer, List<Boolean>> statistics = new HashMap<>();
 
-        times.forEach((hour, gamesData) -> {
+        aggregatedGamesIds.forEach((hour, gamesIds) -> {
             List<Boolean> gameStatuses = null;
             try {
-                gameStatuses = getWinStatuses(gamesData, accountId);
+                gameStatuses = getWinStatuses(gamesIds, accountId);
             } catch (IOException | UnirestException | InterruptedException e) {
                 e.printStackTrace();
             }
@@ -75,10 +103,10 @@ public class App {
         return statistics;
     }
 
-    private static List<Boolean> getWinStatuses(List<Pair<LocalDateTime, Long>> gamesData, String accountId) throws IOException, UnirestException, InterruptedException {
+    private static List<Boolean> getWinStatuses(List<Long> gamesIds, String accountId) throws IOException, UnirestException, InterruptedException {
         List<Boolean> result = new ArrayList<>();
-        for (Pair<LocalDateTime, Long> gameData : gamesData) {
-            result.add(checkGameResult(gameData.second, accountId));
+        for (Long gameId : gamesIds) {
+            result.add(checkGameResult(gameId, accountId));
             Thread.sleep(1200);
         }
 
@@ -88,7 +116,7 @@ public class App {
     private static boolean checkGameResult(Long matchId, String accountId) throws IOException, UnirestException {
         HttpResponse<JsonNode> matchResponse =
                 Unirest.get(baseUrl + matchEndpoint)
-                .queryString("api_key", keyParameter)
+                .queryString(ApiConstants.API_KEY, keyParameter)
                 .routeParam("matchId", String.valueOf(matchId))
                 .asJson();
         JSONArray participantsArray = matchResponse.getBody().getObject().getJSONArray("participants");
@@ -113,33 +141,5 @@ public class App {
                 .isWin();
 
         return result;
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    private static List<Match> getMatches(Summoner summoner) throws UnirestException, IOException {
-        HttpResponse<JsonNode> exploringResponse =
-                Unirest.get(baseUrl + matchListEndpoint + summoner.getAccountId())
-                        .queryString("api_key", keyParameter)
-                        .queryString("beginIndex", 200)
-                        .asJson();
-
-        JSONObject jsonObject = exploringResponse.getBody().getObject();
-        int totalGames = jsonObject.getInt("totalGames");
-        System.out.println("total games = " + totalGames);
-
-        List<Match> matches = new ArrayList<>();
-        for (int beginIndex = 0; beginIndex < totalGames; beginIndex += 100) {
-            HttpResponse<JsonNode> jsonNodeHttpResponse =
-                    Unirest.get(baseUrl + matchListEndpoint + summoner.getAccountId())
-                            .queryString("api_key", keyParameter)
-                            .queryString("beginIndex", beginIndex)
-                            .asJson();
-            JSONArray array = jsonNodeHttpResponse.getBody().getObject().getJSONArray("matches");
-
-            List<Match> matchesFromOnePeriod = JsonUtils.JSONArrayToList(objectMapper, array, Match.class);
-            matches.addAll(matchesFromOnePeriod);
-        }
-
-        return matches;
     }
 }

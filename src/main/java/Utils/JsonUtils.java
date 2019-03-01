@@ -8,12 +8,13 @@ import java.util.List;
 
 public class JsonUtils {
 
+    @SuppressWarnings("UnnecessaryLocalVariable")
     public static <T> List<T> JSONArrayToList(ObjectMapper mapper, JSONArray array, Class<T> listType) throws IOException {
-        List<T> participants =
+        List<T> list =
                 mapper.readValue(
                         array.toString(),
                         mapper.getTypeFactory().constructCollectionType(List.class, listType)
                 );
-        return participants;
+        return list;
     }
 }
